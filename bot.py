@@ -227,7 +227,8 @@ def main():
         print("Добавьте BOT_TOKEN в Variables на Railway!")
         print("="*60)
         return
-    
+
+    print("PTB version:", telegram.__version__)
     # Создаем приложение
     app = Application.builder().token(BOT_TOKEN).build()
     
