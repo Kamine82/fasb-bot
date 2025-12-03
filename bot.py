@@ -3,8 +3,8 @@ import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-# 🔐 Токен из переменных окружения Railway
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+# 🔐 Токен бота
+BOT_TOKEN = "7634686364:AAHEqI61Ol3jT-yOesf51mqXxNqTbLchxX0"
 
 # Настройка логирования
 logging.basicConfig(
@@ -80,17 +80,24 @@ CHOOSING, TYPING_AREA = range(2)
 
 def format_weight(weight):
     """Форматирование веса упаковки"""
-    return str(weight) if weight % 1 == 0 else f"{weight:.1f}"
+    if isinstance(weight, int):
+        return str(weight)
+    elif weight.is_integer():
+        return str(int(weight))
+    else:
+        return f"{weight:.1f}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Команда /start"""
-    # Создаем кнопки
+    # Очищаем предыдущие данные
+    context.user_data.clear()
+    
+    # Создаем кнопки с ПОЛНЫМИ названиями
     buttons = []
     for coating in COATINGS:
-        short_name = coating["name"]
-        if len(short_name) > 40:
-            short_name = short_name[:37] + "..."
-        buttons.append([f"{coating['id']}. {short_name}"])
+        # Используем полное название без сокращений
+        full_name = f"{coating['id']}. {coating['name']}"
+        buttons.append([full_name])
     
     await update.message.reply_text(
         "🏗️ *Калькулятор расхода материалов для наливных полов*\n"
@@ -105,8 +112,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def choose_coating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработка выбора покрытия"""
     text = update.message.text
+    logger.info(f"Пользователь выбрал: {text}")
+    
     try:
-        coating_id = int(text.split(".")[0])
+        # Извлекаем ID из текста (первый символ до точки)
+        coating_id = int(text.split(".")[0].strip())
+        
+        # Ищем покрытие по ID
         for coating in COATINGS:
             if coating["id"] == coating_id:
                 context.user_data["coating"] = coating
@@ -114,61 +126,71 @@ async def choose_coating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     f"✅ *{coating['name']}*\n\n"
                     "📐 *Введите площадь покрытия в м²:*\n"
                     "Например: 100, 250.5, 75\n\n"
-                    "_Можно использовать дробные числа_",
+                    "_Можно использовать дробные числа, разделитель - точка или запятая_",
                     reply_markup=ReplyKeyboardRemove(),
                     parse_mode="Markdown"
                 )
                 return TYPING_AREA
-    except:
-        pass
-    
-    await update.message.reply_text("❌ Выберите вариант из списка!")
-    return CHOOSING
+        
+        # Если покрытие не найдено
+        await update.message.reply_text("❌ Покрытие не найдено. Выберите вариант из списка!")
+        return await start(update, context)
+        
+    except (ValueError, IndexError) as e:
+        logger.error(f"Ошибка при выборе покрытия: {e}")
+        await update.message.reply_text("❌ Ошибка выбора. Пожалуйста, используйте кнопки.")
+        return await start(update, context)
 
 async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Расчет материалов"""
     try:
-        area_text = update.message.text.replace(",", ".")
+        area_text = update.message.text.replace(",", ".").strip()
         area = float(area_text)
         
         if area <= 0:
             await update.message.reply_text("❌ Площадь должна быть больше 0!")
             return TYPING_AREA
         
-        coating = context.user_data.get("coating", COATINGS[0])
+        if area > 10000:
+            await update.message.reply_text("⚠️ Площадь слишком большая. Для точного расчета свяжитесь с нами.")
         
-        # Выполняем расчет как на сайте
+        coating = context.user_data.get("coating")
+        if not coating:
+            await update.message.reply_text("❌ Ошибка данных. Начните заново: /start")
+            return ConversationHandler.END
+        
+        # Выполняем расчет
         result = "🏗️ *РАСЧЕТ МАТЕРИАЛОВ*\n\n"
         result += f"*Тип покрытия:* {coating['name']}\n"
         result += f"*Площадь:* {area} м²\n\n"
+        result += "---\n"
         result += "*РАСХОД МАТЕРИАЛОВ:*\n\n"
         
-        total_cost = 0
-        
         for layer in coating["layers"]:
-            # Расчет как в JavaScript
+            # Расчет общего расхода материала
             total_kg = area * layer["consumption"]
-            packages = (total_kg // layer["package"]) + (1 if total_kg % layer["package"] > 0 else 0)
+            
+            # Расчет количества упаковок
+            packages = total_kg / layer["package"]
+            if packages.is_integer():
+                packages_needed = int(packages)
+            else:
+                packages_needed = int(packages) + 1
             
             layer_name = layer["name"]
             if layer.get("optional"):
                 layer_name += " (опция)"
             
             result += f"🔹 *{layer_name}*\n"
-            result += f"   Материал: {layer['material']}\n"
-            result += f"   Расход: {total_kg:.1f} кг\n"
-            result += f"   Упаковок: {packages} шт.\n"
+            result += f"   *Материал:* {layer['material']}\n"
+            result += f"   *Расход:* {total_kg:.1f} кг\n"
+            result += f"   *Упаковок:* {packages_needed} шт.\n"
             result += f"   (фасовка по {format_weight(layer['package'])} кг)\n\n"
-            
-            # Примерная стоимость
-            material_cost = total_kg * 350  # 350 руб/кг
-            total_cost += material_cost
         
         result += "---\n"
-        result += f"*Примерная стоимость материалов:* ~{total_cost:.0f} ₽\n\n"
         result += "📞 *Контакты ФАСБ:*\n"
-        result += "+7 (981) 746-93-54\n"
-        result += "fasb_ik@vk.com\n\n"
+        result += "Телефон: +7 (981) 746-93-54\n"
+        result += "Email: fasb_ik@vk.com\n\n"
         result += "*Внимание:* Расчет предварительный. Для точного КП обратитесь к специалистам.\n"
         result += "_Данный расчет не является офертой._"
         
@@ -178,8 +200,12 @@ async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
         
     except ValueError:
-        await update.message.reply_text("❌ Введите число для площади!")
+        await update.message.reply_text("❌ Ошибка! Введите число для площади.\nПример: 100 или 150.5")
         return TYPING_AREA
+    except Exception as e:
+        logger.error(f"Ошибка при расчете: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при расчете. Попробуйте снова: /start")
+        return ConversationHandler.END
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /help"""
@@ -189,43 +215,42 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 *Команды:*
 /start - начать новый расчет
 /help - показать эту справку
+/cancel - отменить текущий расчет
 
-*Как работает:*
+*Как работает бот:*
 1. Выберите один из 6 типов покрытий
-2. Введите площадь помещения
+2. Введите площадь помещения в м²
 3. Получите детальный расчет материалов
 
 *Типы покрытий:*
-1. Окрасочное полимерное (0.5мм)
-2. Наливное эпоксидное (2мм)
-3. Антискользящее для паркинга (4мм)
-4. Декоративное "чипсовый ковёр" (4мм)
-5. Полиуретанцементное гладкое (4мм)
-6. Полиуретанцементное антискользящее (6мм)
+1. Окрасочное полимерное покрытие для лёгких нагрузок, толщина ~0,5мм
+2. Наливное эпоксидное гладкое покрытие для средних нагрузок, толщина ~2мм
+3. Антискользящее эпоксидное покрытие для паркинга толщиной ~3,5-4мм
+4. Декоративное покрытие 'чипсовый ковёр' толщиной ~3,5-4мм
+5. Полиуретанцементное гладкое покрытие для пищевых производств толщиной ~4мм
+6. Полиуретанцементное антискользящее покрытие для пищевых производств толщиной ~6мм
 
-*Контакты:*
-📞 +7 (981) 746-93-54
-✉️ fasb_ik@vk.com
+*Контакты компании:*
+📞 Телефон: +7 (981) 746-93-54
+✉️ Email: fasb_ik@vk.com
 
 ✅ Бесплатный расчет от профессионалов!
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Отмена"""
+    """Отмена диалога"""
     await update.message.reply_text(
-        "Операция отменена. /start - начать заново",
+        "Операция отменена.\nДля нового расчета используйте /start",
         reply_markup=ReplyKeyboardRemove()
     )
+    context.user_data.clear()
     return ConversationHandler.END
 
 def main():
     """Запуск бота"""
     if not BOT_TOKEN:
         logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
-        print("\n" + "="*60)
-        print("Добавьте BOT_TOKEN в Variables на Railway!")
-        print("="*60)
         return
 
     # Создаем приложение
@@ -241,22 +266,24 @@ def main():
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("help", help_cmd)
-        ]
+        ],
+        allow_reentry=True
     )
     
     # Добавляем обработчики
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("cancel", cancel))
     
     # Запускаем
-    logger.info("🤖 Бот ФАСБ запущен на Railway!")
+    logger.info("🤖 Бот ФАСБ запущен!")
     print("\n" + "="*60)
     print("✅ FASB FLOOR CALCULATOR BOT")
-    print("🤖 Ищите: @FasbFloorCalculator_bot")
+    print("🤖 Бот успешно запущен!")
     print("📱 Тестируйте в Telegram!")
     print("="*60)
     
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
