@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY bot.py .
 
 # Set environment variable placeholder (will override in Railway)
-ENV BOT_TOKEN=""
+# ENV BOT_TOKEN=""
 
 # Run bot
 CMD ["python", "bot.py"]
