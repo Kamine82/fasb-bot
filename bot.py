@@ -228,7 +228,6 @@ def main():
         print("="*60)
         return
 
-    print("PTB version:", telegram.__version__)
     # Создаем приложение
     app = Application.builder().token(BOT_TOKEN).build()
     
