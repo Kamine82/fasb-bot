@@ -4,7 +4,7 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 # 🔐 Токен бота
-BOT_TOKEN = ""
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # Настройка логирования
 logging.basicConfig(
@@ -143,6 +143,7 @@ async def choose_coating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Расчет материалов"""
+    logger.info(f"Начинаем расчет материалов для пользователя {update.effective_user.id}")
     try:
         area_text = update.message.text.replace(",", ".").strip()
         area = float(area_text)
@@ -159,42 +160,54 @@ async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text("❌ Ошибка данных. Начните заново: /start")
             return ConversationHandler.END
         
-        # Выполняем расчет
-        result = "🏗️ *РАСЧЕТ МАТЕРИАЛОВ*\n\n"
-        result += f"*Тип покрытия:* {coating['name']}\n"
-        result += f"*Площадь:* {area} м²\n\n"
+        # Выполняем расчет — plain text (без Markdown)
+        result = "🏗️ РАСЧЕТ МАТЕРИАЛОВ\n\n"
+        result += f"Тип покрытия: {coating['name']}\n"
+        result += f"Площадь: {area} м²\n\n"
         result += "---\n"
-        result += "*РАСХОД МАТЕРИАЛОВ:*\n\n"
+        result += "РАСХОД МАТЕРИАЛОВ:\n\n"
         
-        for layer in coating["layers"]:
+        layers = coating["layers"]
+        logger.info(f"coating layers {layers}")
+
+        for layer in layers:
             # Расчет общего расхода материала
             total_kg = area * layer["consumption"]
+            logger.info(f"total_kg {total_kg}")
             
             # Расчет количества упаковок
             packages = total_kg / layer["package"]
+            logger.info(f"packages {packages}")
+
             if packages.is_integer():
                 packages_needed = int(packages)
             else:
                 packages_needed = int(packages) + 1
             
             layer_name = layer["name"]
+            logger.info(f"layer_name {layer_name}")
+
             if layer.get("optional"):
                 layer_name += " (опция)"
-            
-            result += f"🔹 *{layer_name}*\n"
-            result += f"   *Материал:* {layer['material']}\n"
-            result += f"   *Расход:* {total_kg:.1f} кг\n"
-            result += f"   *Упаковок:* {packages_needed} шт.\n"
+
+            result += f"🔹 {layer_name}\n"
+            result += f"   Материал: {layer['material']}\n"
+            result += f"   Расход: {total_kg:.1f} кг\n"
+            result += f"   Упаковок: {packages_needed} шт.\n"
             result += f"   (фасовка по {format_weight(layer['package'])} кг)\n\n"
+            logger.info(f"result {result}")
+
         
         result += "---\n"
-        result += "📞 *Контакты ФАСБ:*\n"
+        result += "📞 Контакты ФАСБ:\n"
         result += "Телефон: +7 (981) 746-93-54\n"
         result += "Email: fasb_ik@vk.com\n\n"
-        result += "*Внимание:* Расчет предварительный. Для точного КП обратитесь к специалистам.\n"
-        result += "_Данный расчет не является офертой._"
+        result += "Внимание: Расчет предварительный. Для точного КП обратитесь к специалистам.\n"
+        result += "Данный расчет не является офертой."
+        logger.info(f"result {result}")
+
         
-        await update.message.reply_text(result, parse_mode="Markdown")
+        await update.message.reply_text(result)
         await update.message.reply_text("🔄 Новый расчет: /start")
         
         return ConversationHandler.END
