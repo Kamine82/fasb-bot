@@ -239,7 +239,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 *Контакты компании*:
 📞 Телефон: \+7 \(981\) 746\-93\-54
 ✉️ Email: fasb\_ik@vk\.com
-🌐 https://www.fasb.su
+🌐 https://www\.fasb\.su
 
 ✅ Бесплатный расчет от профессионалов\!
     """
