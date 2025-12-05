@@ -5,7 +5,5 @@ services:
     build: .
     container_name: fasb-calc-bot
     env_file:
-      - env/.env.prod
-    environment:
-      - BOT_TOKEN=$(BOT_TOKEN)
+      - ./env/.env.prod
     restart: always
