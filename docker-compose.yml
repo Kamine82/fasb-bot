@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: fasb-calc-bot
+    env_file:
+      - env/.env.prod
+    environment:
+      - BOT_TOKEN=$(BOT_TOKEN)
+    restart: always

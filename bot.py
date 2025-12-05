@@ -1,19 +1,16 @@
 import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, BotCommand
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
-# 🔐 Токен бота
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-# Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ========== ТОЧНЫЕ ДАННЫЕ КАК НА ВАШЕМ САЙТЕ ==========
 COATINGS = [
     {
         "id": 1,
@@ -75,7 +72,6 @@ COATINGS = [
     }
 ]
 
-# Состояния диалога
 CHOOSING, TYPING_AREA = range(2)
 
 def format_weight(weight):
@@ -87,25 +83,31 @@ def format_weight(weight):
     else:
         return f"{weight:.1f}"
 
+def escape_markdown(text: str) -> str:
+    """Экранирование специальных символов MarkdownV2"""
+    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
+
+async def callback_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    return await start(update, context)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Команда /start"""
-    # Очищаем предыдущие данные
     context.user_data.clear()
-    
-    # Создаем кнопки с ПОЛНЫМИ названиями
+
     buttons = []
     for coating in COATINGS:
-        # Используем полное название без сокращений
         full_name = f"{coating['id']}. {coating['name']}"
         buttons.append([full_name])
-    
-    await update.message.reply_text(
+
+    await (update.message or update.callback_query.message).reply_text(
         "🏗️ *Калькулятор расхода материалов для наливных полов*\n"
         "*Компания ФАСБ*\n\n"
-        "✅ *Бесплатно, без регистрации, мгновенный расчет!*\n\n"
+        "✅ *Бесплатно, без регистрации, мгновенный расчет\!*\n\n"
         "👇 *Выберите тип покрытия нужной толщины:*",
         reply_markup=ReplyKeyboardMarkup(buttons, one_time_keyboard=True, resize_keyboard=True),
-        parse_mode="Markdown"
+        parse_mode="MarkdownV2"
     )
     return CHOOSING
 
@@ -115,24 +117,21 @@ async def choose_coating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     logger.info(f"Пользователь выбрал: {text}")
     
     try:
-        # Извлекаем ID из текста (первый символ до точки)
         coating_id = int(text.split(".")[0].strip())
         
-        # Ищем покрытие по ID
         for coating in COATINGS:
             if coating["id"] == coating_id:
                 context.user_data["coating"] = coating
                 await update.message.reply_text(
-                    f"✅ *{coating['name']}*\n\n"
+                    f"✅ *{escape_markdown(coating['name'])}*\n\n"
                     "📐 *Введите площадь покрытия в м²:*\n"
-                    "Например: 100, 250.5, 75\n\n"
-                    "_Можно использовать дробные числа, разделитель - точка или запятая_",
+                    "Например: 100, 250\.5, 75\n\n"
+                    "_Можно использовать дробные числа, разделитель \- точка или запятая_",
                     reply_markup=ReplyKeyboardRemove(),
-                    parse_mode="Markdown"
+                    parse_mode="MarkdownV2"
                 )
                 return TYPING_AREA
         
-        # Если покрытие не найдено
         await update.message.reply_text("❌ Покрытие не найдено. Выберите вариант из списка!")
         return await start(update, context)
         
@@ -160,18 +159,15 @@ async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text("❌ Ошибка данных. Начните заново: /start")
             return ConversationHandler.END
         
-        # Выполняем расчет — plain text (без Markdown)
-        result = "🏗️ РАСЧЕТ МАТЕРИАЛОВ\n\n"
-        result += f"Тип покрытия: {coating['name']}\n"
-        result += f"Площадь: {area} м²\n\n"
-        result += "---\n"
+        result = "🏗️ *РАСЧЕТ МАТЕРИАЛОВ*\n\n"
+        result += f"Тип покрытия: {escape_markdown(coating['name'])}\n"
+        result += f"Площадь: {escape_markdown(str(area))} м²\n\n"
+        result += "\-\-\-\n"
         result += "РАСХОД МАТЕРИАЛОВ:\n\n"
         
         for layer in coating["layers"]:
-            # Расчет общего расхода материала
             total_kg = area * layer["consumption"]
             
-            # Расчет количества упаковок
             packages = total_kg / layer["package"]
 
             if packages.is_integer():
@@ -184,26 +180,27 @@ async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if layer.get("optional"):
                 layer_name += " (опция)"
             
-            result += f"🔹 *{layer_name}*\n"
-            result += f"   *Материал:* {layer['material']}\n"
-            result += f"   *Расход:* {total_kg:.1f} кг\n"
-            result += f"   *Количество упаковок:* {packages_needed} шт.\n"
-            result += f"   (кратно фасовке по {format_weight(layer['package'])} кг)\n\n"
+            result += f"🔹 *{escape_markdown(layer_name)}*\n"
+            result += f"   *Материал:* {escape_markdown(layer['material'])}\n"
+            escaped = escape_markdown(f"{total_kg:.1f}")
+            result += f"   *Расход:* {escaped} кг\n"
+            result += f"   *Количество упаковок:* {escape_markdown(str(packages_needed))} шт\.\n"
+            result += f"   \(кратно фасовке по {escape_markdown(format_weight(layer['package']))} кг\)\n\n"
         
-        result += "---\n"
+        result += "\-\-\-\n"
         result += "📞 Контакты ФАСБ:\n"
-        result += "Телефон: +7 (981) 746-93-54\n"
-        result += "Email: fasb_ik@vk.com\n\n"
-        result += "Все рассчитанные материалы вы можете заказать у нас!\n"
-        result += "Мы гарантируем качество продукции и профессиональные консультации по подбору и применению материалов.\n"
-        result += "Внимание: Расчет предварительный. Для точного КП обратитесь к специалистам.\n\n"
-        result += "Данный расчет не является офертой."
+        result += "Телефон: \+7 \(981\) 746\-93\-54\n"
+        result += "Email: fasb\_ik@vk\.com\n\n"
+        result += "Все рассчитанные материалы вы можете заказать у нас\!\n"
+        result += "Мы гарантируем качество продукции и профессиональные консультации по подбору и применению материалов\.\n"
+        result += "Внимание: Расчет предварительный\. Для точного КП обратитесь к специалистам\.\n\n"
+        result += "Данный расчет не является офертой\."
 
-        
-        await update.message.reply_text(result)
-        await update.message.reply_text("🔄 Новый расчет: /start")
-        
-        return ConversationHandler.END
+        button0 = InlineKeyboardButton(text="🔄 Новый расчет", callback_data="restart")
+        btn2 = InlineKeyboardButton(text="🌐 Перейти на сайт", url="https://www.fasb.su/")
+        button_list = [[button0, btn2]]
+        await update.message.reply_text(result, parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(button_list))
+        return CHOOSING
         
     except ValueError:
         await update.message.reply_text("❌ Ошибка! Введите число для площади.\nПример: 100 или 150.5")
@@ -214,7 +211,6 @@ async def calculate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /help"""
     help_text = """
 📖 *Помощь по боту калькулятора ФАСБ*
 
@@ -255,15 +251,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 def main():
-    """Запуск бота"""
     if not BOT_TOKEN:
         logger.error("❌ Ошибка: BOT_TOKEN не установлен!")
         return
 
-    # Создаем приложение
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Настраиваем диалог
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -271,34 +264,23 @@ def main():
             TYPING_AREA: [MessageHandler(filters.TEXT & ~filters.COMMAND, calculate)],
         },
         fallbacks=[
+            CommandHandler("cancel", cancel),
             CommandHandler("help", help_cmd),
-            CommandHandler("cancel", cancel)
+            CallbackQueryHandler(callback_restart, pattern="^restart$")
         ],
         allow_reentry=True
     )
     
-    # Добавляем обработчики
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("cancel", cancel))
     
-    # Запускаем
     logger.info("🤖 Бот ФАСБ запущен!")
     print("\n" + "="*60)
     print("✅ FASB FLOOR CALCULATOR BOT")
     print("🤖 Бот успешно запущен!")
     print("📱 Тестируйте в Telegram!")
     print("="*60)
-    
-    # async def _set_bot_commands(app):
-    #     try:
-    #         await app.bot.set_my_commands([
-    #             BotCommand("start", "Начать новый расчет"),
-    #             BotCommand("help", "Показать справку"),
-    #             BotCommand("cancel", "Отменить текущую операцию"),
-    #         ])
-    #     except Exception:
-    #         logger.exception("Не удалось установить команды бота")
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
